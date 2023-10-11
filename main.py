@@ -8,7 +8,13 @@ from fire_animation import fire
 from curses_tools import draw_frame, get_frame_size, read_controls
 
 
-async def animate_frames(canvas, start_row, start_column, frames):
+async def go_to_sleep(seconds):
+    iteration_count = int(seconds * 10)
+    for _ in range(iteration_count):
+        await asyncio.sleep(0)
+
+
+async def animate_rocket(canvas, start_row, start_column, frames):
     frames_cycle = itertools.cycle(frames)
     height, width = canvas.getmaxyx()
     border_size = 1
@@ -38,10 +44,7 @@ async def animate_frames(canvas, start_row, start_column, frames):
         draw_frame(canvas, frame_pos_y, frame_pos_x, current_frame)
         canvas.refresh()
 
-        i = 1
-        while i < 3:
-            await asyncio.sleep(0)
-            i += 1
+        await go_to_sleep(0.3)
 
         draw_frame(
             canvas,
@@ -67,31 +70,24 @@ def stars_generator(height, width, number):
         return y_pos, x_pos, symbol
 
 
-async def blink(canvas, row, column, symbol):
+async def blink(canvas, row, column, symbol, offset):
     while True:
-        canvas.addstr(row, column, symbol, curses.A_DIM)
-        i = 1
-        while i < random.randint(4, 9):
-            await asyncio.sleep(0)
-            i +=1
-
-        canvas.addstr(row, column, symbol)
-        i = 1
-        while i < random.randint(2, 4):
-            await asyncio.sleep(0)
-            i += 1
-
-        canvas.addstr(row, column, symbol, curses.A_BOLD)
-        i = 1
-        while i < random.randint(5, 10):
-            await asyncio.sleep(0)
-            i += 1
-
-        canvas.addstr(row, column, symbol)
-        i = 1
-        while i < random.randint(2, 4):
-            await asyncio.sleep(0)
-            i += 1
+        if offset == 0:
+            canvas.addstr(row, column, symbol, curses.A_DIM)
+            await go_to_sleep(2)
+            offset += 1
+        if offset == 1:
+            canvas.addstr(row, column, symbol)
+            await go_to_sleep(0.3)
+            offset += 1
+        if offset == 2:
+            canvas.addstr(row, column, symbol, curses.A_BOLD)
+            await go_to_sleep(0.5)
+            offset += 1
+        if offset == 3:
+            canvas.addstr(row, column, symbol)
+            await go_to_sleep(0.3)
+            offset = 0
 
 
 def main(canvas):
@@ -107,7 +103,7 @@ def main(canvas):
 
     while count_coroutine < number:
         row, column, symbol = stars_generator(height, width, number)
-        coroutine_ = blink(canvas, row, column, symbol)
+        coroutine_ = blink(canvas, row, column, symbol, random.randint(0, 3))
         coroutines.append(coroutine_)
         count_coroutine +=1
 
@@ -125,7 +121,7 @@ def main(canvas):
 
     rocket_frames = (rocket_frame_1, rocket_frame_2)
     start_rocket_row = height / 2
-    coro_rocket_anim = animate_frames(
+    coro_rocket_anim = animate_rocket(
         canvas,
         start_rocket_row,
         start_col,
@@ -137,7 +133,6 @@ def main(canvas):
         for coroutine in coroutines.copy():
             try:
                 coroutine.send(None)
-                # time.sleep(0.1)
             except StopIteration:
                 coroutines.remove(coroutine)
 
@@ -152,4 +147,4 @@ def main(canvas):
 if __name__ == '__main__':
     curses.update_lines_cols()
     curses.wrapper(main)
-    # curses.wrapper(draw1)
+ 
