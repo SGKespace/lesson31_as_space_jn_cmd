@@ -17,10 +17,9 @@ ROCKET_FRAMES_DIR = join(ANIM_DIR, 'rocket')
 GARBAGE_FRAMES_DIR = join(ANIM_DIR, 'garbage')
 
 
-async def go_to_sleep(seconds):
-    iteration_count = int(seconds * 10)
-    for _ in range(iteration_count):
-        await asyncio.sleep(0)
+def load_frame_from_file(filename):
+    with open(filename, 'r') as fd:
+        return fd.read()
 
 
 def get_frames_list(dirnames):
@@ -31,7 +30,44 @@ def get_frames_list(dirnames):
     ]
 
 
-async def animate_rocket(canvas, start_row, start_column, frames):
+async def sleep(tics=1):
+    iteration_count = int(tics * 10)
+    for _ in range(iteration_count):
+        await asyncio.sleep(0)
+
+
+async def blink(canvas, row, column, symbol='*', offset=1):
+    while True:
+        if offset == 0:
+            canvas.addstr(row, column, symbol, curses.A_DIM)
+            await sleep(2)
+            offset += 1
+
+        if offset == 1:
+            canvas.addstr(row, column, symbol)
+            await sleep(0.3)
+            offset += 1
+
+        if offset == 2:
+            canvas.addstr(row, column, symbol, curses.A_BOLD)
+            await sleep(0.5)
+            offset += 1
+
+        if offset == 3:
+            canvas.addstr(row, column, symbol)
+            await sleep(0.3)
+            offset = 0
+
+
+def stars_generator(height, width, number=50):
+    for star in range(number):
+        y_pos = random.randint(1, height - 2)
+        x_pos = random.randint(1, width - 2)
+        symbol = random.choice(['+', '*', '.', ':'])
+        yield y_pos, x_pos, symbol
+
+
+async def animate_frames(canvas, start_row, start_column, frames):
     frames_cycle = itertools.cycle(frames)
     height, width = canvas.getmaxyx()
     border_size = 1
@@ -61,7 +97,7 @@ async def animate_rocket(canvas, start_row, start_column, frames):
         draw_frame(canvas, frame_pos_y, frame_pos_x, current_frame)
         canvas.refresh()
 
-        await go_to_sleep(0.3)
+        await sleep(0.3)
 
         draw_frame(
             canvas,
@@ -70,40 +106,42 @@ async def animate_rocket(canvas, start_row, start_column, frames):
             current_frame,
             negative=True
         )
+
         current_frame = next(frames_cycle)
 
 
-def load_frame_from_file(filename):
-    with open(filename, 'r') as fd:
-        return fd.read()
-
-
-def stars_generator(height, width, number=50):
-    for star in range(number):
-        y_pos = random.randint(1, height - 2)
-        x_pos = random.randint(1, width - 2)
-        symbol = random.choice(['+', '*', '.', ':'])
-        yield y_pos, x_pos, symbol
-
-
-async def blink(canvas, row, column, symbol='*', offset=1):
+async def fill_orbit_with_garbage(canvas, coros, garbage_frames):
+    _, columns_number = canvas.getmaxyx()
+    border_size = 1
     while True:
-        if offset == 0:
-            canvas.addstr(row, column, symbol, curses.A_DIM)
-            await go_to_sleep(2)
-            offset += 1
-        if offset == 1:
-            canvas.addstr(row, column, symbol)
-            await go_to_sleep(0.3)
-            offset += 1
-        if offset == 2:
-            canvas.addstr(row, column, symbol, curses.A_BOLD)
-            await go_to_sleep(0.5)
-            offset += 1
-        if offset == 3:
-            canvas.addstr(row, column, symbol)
-            await go_to_sleep(0.3)
-            offset = 0
+        current_trash_frame = random.choice(garbage_frames)
+        _, trash_column_size = get_frame_size(current_trash_frame)
+        random_column = random.randint(
+            border_size,
+            columns_number - border_size
+        )
+        actual_column = min(
+            columns_number - trash_column_size - border_size,
+            random_column + trash_column_size - border_size,
+        )
+
+        trash_coro = fly_garbage(canvas, actual_column, current_trash_frame)
+        coros.append(trash_coro)
+        await sleep(2)
+
+
+def run_event_loop(coroutines):
+    while True:
+        index = 0
+        while index < len(coroutines):
+            coro = coroutines[index]
+            try:
+                coro.send(None)
+            except StopIteration:
+                coroutines.remove(coro)
+            index += 1
+
+        time.sleep(TIC_TIMEOUT)
 
 
 def main(canvas):
@@ -113,18 +151,20 @@ def main(canvas):
 
     height, width = canvas.getmaxyx()
 
-    coroutines = [blink(canvas, row, column, symbol, random.randint(0, 3))
-                  for row, column, symbol in stars_generator(height, width)
-                  ]
+    coroutines = [
+        blink(canvas, row, column, symbol, random.randint(0, 3))
+        for row, column, symbol in stars_generator(height, width)
+    ]
 
     start_row = height - 2
     start_col = width / 2
-    coroutines.append(fire(canvas, start_row, start_col))
+    coro_shot = fire(canvas, start_row, start_col)
+    coroutines.append(coro_shot)
 
     rocket_frames = get_frames_list(ROCKET_FRAMES_DIR)
 
     start_rocket_row = height / 2
-    coro_rocket_anim = animate_rocket(
+    coro_rocket_anim = animate_frames(
         canvas,
         start_rocket_row,
         start_col,
@@ -133,24 +173,13 @@ def main(canvas):
     coroutines.append(coro_rocket_anim)
 
     garbage_frames = get_frames_list(GARBAGE_FRAMES_DIR)
-    garbage_coro = [
-        fly_garbage(canvas, (column * 10) + 5, frame)
-        for column, frame in enumerate(garbage_frames)
-    ]
+    garbage_coro = fill_orbit_with_garbage(canvas, coroutines, garbage_frames)
 
-    coroutines.extend(garbage_coro)
+    coroutines.append(garbage_coro)
 
-    while True:
-        for coroutine in coroutines.copy():
-            try:
-                coroutine.send(None)
-            except StopIteration:
-                coroutines.remove(coroutine)
+    canvas.refresh()
 
-        if len(coroutines) == 0:
-            break
-        time.sleep(0.05)
-        canvas.refresh()
+    run_event_loop(coroutines)
 
 
 if __name__ == '__main__':
